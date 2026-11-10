@@ -2,7 +2,6 @@ import { groupOf } from "@/rules/eightBall";
 import type { UiState } from "@/game/Game";
 import { ballColor } from "@/render/ballTexture";
 
-const PLAYERS = ["Você", "CPU"] as const;
 const GROUP_LABEL = { solids: "Lisas", stripes: "Listradas" } as const;
 
 function Dot({ id }: { id: number }) {
@@ -20,10 +19,18 @@ export function Hud({
   state,
   onRestart,
   onToggleView,
+  names = ["Você", "CPU"],
+  you = 0,
+  opponentHint = "A CPU está jogando...",
+  restartLabel = "Reiniciar",
 }: {
   state: UiState;
   onRestart: () => void;
   onToggleView: () => void;
+  names?: [string, string];
+  you?: 0 | 1;
+  opponentHint?: string;
+  restartLabel?: string;
 }) {
   const { turn, groups, pocketed, power, message, winner, phase, view } = state;
   const hint =
@@ -34,16 +41,16 @@ export function Hud({
           ? "Mova o mouse para girar a mira; clique e arraste para dar a tacada."
           : "Aponte com o mouse; clique e arraste para definir a força."
         : phase === "cpu"
-          ? "A CPU está jogando..."
+          ? opponentHint
           : "";
 
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col justify-between p-4 text-white">
       <div className="flex items-start justify-between gap-4">
         <div className="pointer-events-auto flex gap-3">
-          {PLAYERS.map((name, i) => (
+          {names.map((name, i) => (
             <div
-              key={name}
+              key={i}
               className={`rounded-lg border px-4 py-2 backdrop-blur ${
                 turn === i && winner === null ? "border-amber-300 bg-black/60" : "border-white/15 bg-black/40"
               }`}
@@ -73,7 +80,7 @@ export function Hud({
             onClick={onRestart}
             className="rounded-lg border border-white/20 bg-black/50 px-3 py-2 text-sm hover:bg-black/70"
           >
-            Reiniciar
+            {restartLabel}
           </button>
         </div>
       </div>
@@ -93,7 +100,7 @@ export function Hud({
 
       {winner !== null && (
         <div className="pointer-events-auto absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/70">
-          <div className="text-4xl font-bold">{winner === 0 ? "Você venceu!" : "A CPU venceu."}</div>
+          <div className="text-4xl font-bold">{winner === you ? "Você venceu!" : `${names[winner]} venceu.`}</div>
           <div className="text-white/70">{message}</div>
           <button
             onClick={onRestart}
