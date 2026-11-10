@@ -7,13 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "server:build": "esbuild server/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/server.mjs",
+    "server:start": "node dist-server/server.mjs"
   },
   "dependencies": {
     "next": "16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "three": "^0.187.0"
+    "three": "^0.187.0",
+    "ws": "8.22.2"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
@@ -21,6 +24,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.187.0",
+    "@types/ws": "8.18.2",
+    "esbuild": "0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.4.5",
     "tailwindcss": "^4",
