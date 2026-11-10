@@ -74,14 +74,12 @@ export async function startServer(opts: {
       // Teto de conexões por IP: recusa o upgrade com 429 (em vez de aceitar e fechar com 1008).
       if ((perIp.get(ip) ?? 0) >= MAX_CONN_PER_IP) return reject(socket, 429, "Too Many Requests");
       perIp.set(ip, (perIp.get(ip) ?? 0) + 1);
-      let upgraded = false;
+      // A vaga vive tanto quanto o socket CRU: cobre handshake recusado pelo ws (400/405,
+      // que não lança nem chama o callback), destroy precoce, terminate, erro e fechamento normal.
+      socket.once("close", () => release(ip));
       try {
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          upgraded = true;
-          onConnection(ws, ip);
-        });
+        wss.handleUpgrade(req, socket, head, (ws) => onConnection(ws, ip));
       } catch {
-        if (!upgraded) release(ip);
         socket.destroy();
       }
     } catch {
@@ -90,7 +88,7 @@ export async function startServer(opts: {
   });
 
   const release = (ip: string): void => {
-    const n = (perIp.get(ip) ?? 1) - 1;
+    const n = (perIp.get(ip) ?? 0) - 1;
     if (n <= 0) perIp.delete(ip);
     else perIp.set(ip, n);
   };
@@ -122,9 +120,18 @@ export async function startServer(opts: {
         }
       },
     };
+    // Fechamento por abuso/erro: para de despachar imediatamente e derruba o socket de verdade
+    // (ws.close sozinho deixaria o cliente enviando por até 30 s). O evento "close" ainda dispara
+    // uma vez e chama room.disconnect.
     const kill = (code: number): void => {
+      conn.alive = false;
       try {
         ws.close(code);
+      } catch {
+        /* ignorado */
+      }
+      try {
+        ws.terminate();
       } catch {
         /* ignorado */
       }
@@ -173,7 +180,6 @@ export async function startServer(opts: {
 
     ws.on("close", () => {
       live.delete(ws);
-      release(ip);
       conn.alive = false;
       try {
         // mesmo wrapper: a Room ignora desconexões de conexões obsoletas
@@ -197,17 +203,21 @@ export async function startServer(opts: {
   }, opts.tickMs ?? 33);
 
   const heartbeat = setInterval(() => {
-    for (const [ws, hb] of live) {
-      if (!hb.isAlive) {
-        ws.terminate();
-        continue;
+    try {
+      for (const [ws, hb] of live) {
+        if (!hb.isAlive) {
+          ws.terminate();
+          continue;
+        }
+        hb.isAlive = false;
+        try {
+          ws.ping();
+        } catch {
+          /* ignorado */
+        }
       }
-      hb.isAlive = false;
-      try {
-        ws.ping();
-      } catch {
-        /* ignorado */
-      }
+    } catch {
+      /* um erro do heartbeat não derruba o processo */
     }
   }, HEARTBEAT_MS);
 
@@ -215,6 +225,9 @@ export async function startServer(opts: {
     http.once("error", reject);
     http.listen(opts.port, () => resolve());
   });
+  // Erros posteriores do servidor de rede (ex.: EMFILE sob flood) não derrubam o processo.
+  http.on("error", () => console.error("erro no servidor HTTP"));
+  wss.on("error", () => console.error("erro no servidor WebSocket"));
   const addr = http.address();
   const port = typeof addr === "object" && addr ? addr.port : opts.port;
 

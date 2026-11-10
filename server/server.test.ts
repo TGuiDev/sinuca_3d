@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import net from "node:net";
 import WebSocket from "ws";
 import { startServer } from "./index";
 
@@ -194,10 +195,16 @@ describe("servidor WebSocket", () => {
     a2.send({ t: "reconectar", codigo: sala.codigo, token: sala.token });
     const s2 = await a2.waitFor((m) => m.t === "sala");
     expect(s2.voce).toBe(0);
-    expect(await a.waitClose()).toBeTruthy();
-    a.send({ t: "sair" }); // socket antigo: descartado
-    await sleep(200);
+    // socket antigo ainda aberto do lado do servidor/cliente em fechamento: injeta um frame cru "sair"
+    const payload = Buffer.from('{"t":"sair"}');
+    const key = Buffer.from([1, 2, 3, 4]);
+    const masked = Buffer.from(payload.map((x, i) => x ^ key[i % 4]));
+    const frame = [Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), key, masked])];
+    const raw = (a.ws as any)._socket as net.Socket;
+    for (const f of frame) raw.write(f);
+    await sleep(300);
     expect(b.msgs.some((m) => m.t === "estado" && m.fase === "fim")).toBe(false);
+    expect(a2.msgs.some((m) => m.t === "estado" && m.fase === "fim")).toBe(false);
   });
 
   it("sair dá W.O. ao oponente", async () => {
@@ -219,5 +226,52 @@ describe("servidor WebSocket", () => {
       });
     });
     expect(r).toBe("429");
+  });
+
+  it("upgrades malformados não vazam vagas do limite por IP", async () => {
+    const bad = () =>
+      new Promise<void>((res) => {
+        const sock = net.connect(srv.port, "127.0.0.1", () => {
+          sock.write(
+            `GET /socket HTTP/1.1\r\nHost: x\r\nOrigin: ${ORIGIN}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n`,
+          );
+        });
+        sock.on("error", () => {});
+        sock.on("close", () => res());
+        sock.resume();
+      });
+    for (let i = 0; i < 12; i++) await bad();
+    await sleep(100);
+    const c = await connect();
+    expect(c.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it("vaga por IP é liberada ao fechar uma conexão", async () => {
+    const cs: Client[] = [];
+    for (let i = 0; i < 10; i++) cs.push(await connect());
+    const tryOne = () =>
+      new Promise<string>((res) => {
+        const x = new Client(srv.port);
+        clients.push(x);
+        x.ws.on("open", () => res("open"));
+        x.ws.on("unexpected-response", (_q, rs) => {
+          res(String(rs.statusCode));
+          rs.resume();
+        });
+      });
+    expect(await tryOne()).toBe("429");
+    cs[0].ws.close();
+    await cs[0].waitClose();
+    await sleep(100);
+    expect(await tryOne()).toBe("open");
+  });
+
+  it("após fechamento por abuso, mensagens seguintes não são processadas", async () => {
+    const { a, b } = await pair();
+    for (let i = 0; i < 5; i++) a.send("lixo");
+    a.send({ t: "sair" });
+    await sleep(300);
+    expect(b.msgs.some((m) => m.t === "estado" && m.fase === "fim")).toBe(false);
+    expect(await a.waitClose()).toBeTruthy();
   });
 });
