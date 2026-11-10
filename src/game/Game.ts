@@ -6,7 +6,9 @@ import { rackBalls, TABLE_H, TABLE_W } from "@/physics/table";
 import type { Vec2, World } from "@/physics/types";
 import { createScene, type SceneApi } from "@/render/scene";
 import { newGame, resolveShot, type GameState, type Group } from "@/rules/eightBall";
+import { ownBallIds, steer, STEER_LIMIT_S } from "./homing";
 import { clampCuePlacement } from "./placement";
+import { installXit } from "./xit";
 
 export type Phase = "aim" | "rolling" | "placing" | "cpu" | "over";
 
@@ -40,6 +42,9 @@ export class Game {
   private pitch = PITCH_DEFAULT;
   private pullPx = 0;
   private lockWanted = false;
+  private xit = false;
+  private steerT = 0;
+  private removeXit: () => void;
   private cpuAt = 0;
   private cpuPlan: (Shot & { at: number }) | null = null;
   private raf = 0;
@@ -52,6 +57,9 @@ export class Game {
     private onState: (s: UiState) => void,
   ) {
     this.scene = createScene(container);
+    this.removeXit = installXit((on) => {
+      this.xit = on;
+    });
     this.reset();
     container.addEventListener("pointermove", this.onMove);
     container.addEventListener("pointerdown", this.onDown);
@@ -72,6 +80,7 @@ export class Game {
 
   dispose(): void {
     this.disposed = true;
+    this.removeXit();
     cancelAnimationFrame(this.raf);
     this.container.removeEventListener("pointermove", this.onMove);
     this.container.removeEventListener("pointerdown", this.onDown);
@@ -178,6 +187,7 @@ export class Game {
 
   private fire(angle: number, power: number): void {
     strike(this.world, angle, power);
+    this.steerT = 0;
     this.power = 0;
     this.cpuPlan = null;
     this.scene.setCue(false, this.cue.pos, 0, 0);
@@ -272,6 +282,10 @@ export class Game {
     if (this.phase === "rolling") {
       this.acc += dt;
       while (this.acc >= DT) {
+        if (this.xit && this.rules.current === 0 && this.steerT < STEER_LIMIT_S) {
+          steer(this.world, ownBallIds(this.world.balls, this.rules.groups[0]), DT);
+          this.steerT += DT;
+        }
         step(this.world, DT);
         this.acc -= DT;
       }
