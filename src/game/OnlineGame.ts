@@ -8,6 +8,7 @@ import { clampCuePlacement } from "./placement";
 
 const DRAG_PX_FOR_FULL_POWER = 250;
 const ZERO: Vec2 = { x: 0, y: 0 };
+const SHOT_TIMEOUT_MS = 2000;
 
 type Estado = Extract<ServerMsg, { t: "estado" }>;
 
@@ -25,6 +26,8 @@ export class OnlineGame {
   private view: "top" | "orbit" = "top";
   private localCue: Vec2 | null = null;
   private sent = false;
+  private holdCue = false;
+  private pending: { timer: ReturnType<typeof setTimeout>; prev: Phase } | null = null;
   private raf = 0;
   private lastTime = 0;
   private disposed = false;
@@ -39,7 +42,9 @@ export class OnlineGame {
     this.scene = createScene(container);
     container.addEventListener("pointermove", this.onMove);
     container.addEventListener("pointerdown", this.onDown);
+    container.addEventListener("pointercancel", this.onCancel);
     window.addEventListener("pointerup", this.onUp);
+    window.addEventListener("pointercancel", this.onCancel);
     window.addEventListener("keydown", this.onKey);
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -49,11 +54,13 @@ export class OnlineGame {
   }
 
   apply(m: ServerMsg): void {
+    if (this.disposed) return;
     if (m.t === "snapshot") this.applySnapshot(m.bolas);
     else if (m.t === "estado") this.applyEstado(m);
   }
 
   setView(view: "top" | "orbit"): void {
+    if (this.disposed) return;
     this.view = view;
     this.applyView();
     this.emit();
@@ -62,9 +69,12 @@ export class OnlineGame {
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    this.clearPending();
     this.container.removeEventListener("pointermove", this.onMove);
     this.container.removeEventListener("pointerdown", this.onDown);
+    this.container.removeEventListener("pointercancel", this.onCancel);
     window.removeEventListener("pointerup", this.onUp);
+    window.removeEventListener("pointercancel", this.onCancel);
     window.removeEventListener("keydown", this.onKey);
     this.scene.dispose();
   }
@@ -72,21 +82,28 @@ export class OnlineGame {
   // ---------- estado ----------
 
   private applySnapshot(bolas: Extract<ServerMsg, { t: "snapshot" }>["bolas"]): void {
+    this.clearPending();
     this.targets = parseSnapshot(bolas);
     for (const [id, t] of this.targets) {
       if (!this.balls.has(id)) {
         this.balls.set(id, { id, pos: { x: t.x, y: t.y }, vel: { ...ZERO }, pocketed: t.pocketed });
       }
     }
-    for (const id of [...this.balls.keys()]) if (!this.targets.has(id)) this.balls.delete(id);
+    for (const [id, b] of this.balls) if (!this.targets.has(id)) b.pocketed = true;
+    const t0 = this.targets.get(0);
+    const c0 = this.balls.get(0);
+    if (this.holdCue && t0 && c0) c0.pos = { x: t0.x, y: t0.y };
+    this.holdCue = false;
+    if (this.phase !== "placing") this.localCue = null;
   }
 
   private applyEstado(e: Estado): void {
+    this.clearPending();
     this.estado = e;
     this.sent = false;
     this.dragStart = null;
     this.power = 0;
-    this.localCue = null;
+    if (!this.holdCue) this.localCue = null;
     const mine = e.turno === this.you;
     if (e.fase === "fim") this.phase = "over";
     else if (e.fase === "rolando") this.phase = "rolling";
@@ -99,7 +116,7 @@ export class OnlineGame {
 
   private emit(): void {
     const e = this.estado;
-    if (!e) return;
+    if (!e || this.disposed) return;
     this.onState({
       turn: e.turno,
       groups: [toGroup(e.grupos[0]), toGroup(e.grupos[1])],
@@ -110,6 +127,26 @@ export class OnlineGame {
       phase: this.phase,
       view: this.view,
     });
+  }
+
+  private clearPending(): void {
+    if (this.pending) clearTimeout(this.pending.timer);
+    this.pending = null;
+  }
+
+  private armTimeout(prev: Phase): void {
+    this.clearPending();
+    const timer = setTimeout(() => {
+      this.pending = null;
+      if (this.disposed) return;
+      this.sent = false;
+      this.holdCue = false;
+      this.localCue = null;
+      this.phase = prev;
+      this.applyView();
+      this.emit();
+    }, SHOT_TIMEOUT_MS);
+    this.pending = { timer, prev };
   }
 
   private cuePos(): Vec2 {
@@ -160,7 +197,9 @@ export class OnlineGame {
       const pos = clampCuePlacement(p ?? this.cuePos(), this.others());
       this.localCue = pos;
       this.sent = true;
+      this.holdCue = true;
       this.send({ t: "posicionar_branca", x: pos.x, y: pos.y });
+      this.armTimeout("placing");
       return;
     }
     if (this.phase === "aim" && !this.sent) this.dragStart = { x: e.clientX, y: e.clientY };
@@ -173,10 +212,18 @@ export class OnlineGame {
     if (forca > 0.03) {
       this.sent = true;
       this.send({ t: "tacada", angulo: this.aimAngle, forca });
+      this.armTimeout("aim");
       this.power = 0;
       this.phase = "rolling";
       this.applyView();
     } else this.power = 0;
+    this.emit();
+  };
+
+  private onCancel = (): void => {
+    if (!this.dragStart) return;
+    this.dragStart = null;
+    this.power = 0;
     this.emit();
   };
 
@@ -198,7 +245,14 @@ export class OnlineGame {
       b.pocketed = t.pocketed;
       b.pos = easeToward(b.pos, t, dt);
     }
-    this.scene.syncBalls(this.others());
+    const list = this.others();
+    if (this.localCue && (this.phase === "placing" || this.holdCue)) {
+      const i = list.findIndex((b) => b.id === 0);
+      const cue: Ball = { id: 0, pos: this.localCue, vel: { ...ZERO }, pocketed: false };
+      if (i >= 0) list[i] = cue;
+      else list.push(cue);
+    }
+    this.scene.syncBalls(list);
     const showCue = this.phase === "aim";
     this.scene.setCue(showCue, this.cuePos(), this.aimAngle, showCue ? this.power * 0.25 : 0);
     this.scene.render();

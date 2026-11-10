@@ -7,7 +7,15 @@ type Snapshot = Extract<ServerMsg, { t: "snapshot" }>["bolas"];
 
 export function parseSnapshot(bolas: Snapshot): Map<number, BallTarget> {
   const out = new Map<number, BallTarget>();
-  for (const [id, x, y, p] of bolas) out.set(id, { x, y, pocketed: p === 1 });
+  if (!Array.isArray(bolas)) return out;
+  for (const e of bolas.slice(0, 16) as unknown[]) {
+    if (!Array.isArray(e)) continue;
+    const [id, x, y, p] = e as unknown[];
+    if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > 15) continue;
+    if (typeof x !== "number" || !Number.isFinite(x)) continue;
+    if (typeof y !== "number" || !Number.isFinite(y)) continue;
+    out.set(id, { x, y, pocketed: p === 1 || p === true });
+  }
   return out;
 }
 

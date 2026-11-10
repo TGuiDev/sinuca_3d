@@ -13,6 +13,31 @@ describe("parseSnapshot", () => {
   });
 });
 
+describe("parseSnapshot (validação)", () => {
+  const raw = (v: unknown) => v as Parameters<typeof parseSnapshot>[0];
+  it("ignora coordenadas não finitas", () => {
+    const m = parseSnapshot(raw([[1, NaN, 0, 0], [2, 0, Infinity, 0], [3, null, 0, 0], [4, 0, null, 0], [5, 1, 2, 0]]));
+    expect([...m.keys()]).toEqual([5]);
+  });
+  it("ignora ids inválidos", () => {
+    const m = parseSnapshot(raw([[99, 0, 0, 0], [-1, 0, 0, 0], [1.5, 0, 0, 0], [16, 0, 0, 0], [15, 0, 0, 0]]));
+    expect([...m.keys()]).toEqual([15]);
+  });
+  it("limita a 16 entradas", () => {
+    const many = Array.from({ length: 40 }, (_, i) => [i % 16, i, i, 0]);
+    expect(parseSnapshot(raw(many)).size).toBeLessThanOrEqual(16);
+    const late = [...Array.from({ length: 16 }, () => [99, 0, 0, 0]), [3, 0, 0, 0]];
+    expect(parseSnapshot(raw(late)).size).toBe(0);
+  });
+  it("pocketed estrito", () => {
+    const m = parseSnapshot(raw([[1, 0, 0, 2], [2, 0, 0, "1"], [3, 0, 0, 1], [4, 0, 0, true]]));
+    expect([1, 2, 3, 4].map((i) => m.get(i)?.pocketed)).toEqual([false, false, true, true]);
+  });
+  it("não-array devolve mapa vazio", () => {
+    expect(parseSnapshot(raw(null)).size).toBe(0);
+  });
+});
+
 describe("easeToward", () => {
   const a = { x: 0, y: 0 };
   const b = { x: 2, y: -1 };
