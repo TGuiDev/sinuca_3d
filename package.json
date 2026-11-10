@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "server:build": "esbuild server/main.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist-server/server.mjs",
+    "server:build": "esbuild server/main.ts --bundle --platform=node --format=esm --target=node22 --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" --outfile=dist-server/server.mjs",
     "server:start": "node dist-server/server.mjs"
   },
   "dependencies": {

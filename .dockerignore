@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+dist-server
+docs
+.superpowers
+chat-claude
+*.swp
+.env*
+tsconfig.tsbuildinfo
