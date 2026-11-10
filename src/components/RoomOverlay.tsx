@@ -1,9 +1,6 @@
 import type { ReactNode } from "react";
-import type { EstadoTela } from "./roomHelpers";
+import { SEM_CONEXAO, type EstadoTela } from "./roomHelpers";
 import { Painel, VoltarMenu, btnPrimary, btnSecondary } from "./RoomUi";
-
-export const SEM_CONEXAO = "Não foi possível conectar ao servidor.";
-
 
 /** Painel que cobre a mesa (ou null quando o jogo deve aparecer). Só texto React. */
 export function RoomOverlay(
@@ -44,7 +41,9 @@ export function RoomOverlay(
       <Painel>
         <p className="text-lg font-semibold">{p.sala || p.perdida ? "A sala foi encerrada" : SEM_CONEXAO}</p>
         {p.perdida && (
-          <p className="text-sm text-white/70">Não foi possível retomar seu lugar (armazenamento do navegador indisponível).</p>
+          <p className="text-sm text-white/70">
+            Sua sessão nesta sala foi perdida. Volte ao menu para criar ou entrar em outra sala.
+          </p>
         )}
         <VoltarMenu />
       </Painel>

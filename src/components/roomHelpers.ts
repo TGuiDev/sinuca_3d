@@ -229,3 +229,29 @@ export function createSeatStore(get: () => StorageLike = session) {
 }
 
 export const seatStore = createSeatStore();
+
+export const SEM_CONEXAO = "Não foi possível conectar ao servidor.";
+
+export type SessaoEvento =
+  | { t: "erro"; codigo: ErroCodigo }
+  | { t: "sair" }
+  | { t: "encerrada" }
+  | { t: "desconexao" };
+
+/**
+ * O token só é esquecido quando o assento morreu de fato. Erros transitórios
+ * (tente_depois, limite, origem…) e o fim do cliente deixam o assento vivo na
+ * graça do servidor: "Tentar de novo" deve poder reconectar.
+ */
+export function shouldForgetToken(ev: SessaoEvento): boolean {
+  if (ev.t === "sair") return true;
+  if (ev.t === "erro") return ev.codigo === "token_invalido" || ev.codigo === "sala_inexistente";
+  return false;
+}
+
+/** Texto do aviso de revanche; "indisponível" some se o adversário reconectar. */
+export function revancheTexto(kind: "pedida" | "indisponivel" | null, oponente: Assento): string | null {
+  if (kind === "pedida") return "Revanche pedida — aguardando o adversário.";
+  if (kind === "indisponivel" && !oponente?.conectado) return "O adversário não está conectado — revanche indisponível.";
+  return null;
+}

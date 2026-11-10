@@ -4,18 +4,21 @@ import type { UiState } from "@/game/Game";
 import { OnlineGame } from "@/game/OnlineGame";
 import { RoomClient, type NetStatus } from "@/online/net";
 import { ROOM_CODE_RE, type Fase, type ServerMsg } from "@/online/protocol";
-import { SEM_CONEXAO } from "./RoomOverlay";
 import {
   cleanSeats,
   connectGuard,
   erroMensagem,
   planConnect,
   revancheDecision,
+  SEM_CONEXAO,
+  shouldForgetToken,
   seatStore,
   shareLink,
   wrapSocket,
   wsUrlFor,
   type RawSocket,
+  revancheTexto,
+  type SessaoEvento,
   type Seats,
 } from "./roomHelpers";
 
@@ -50,7 +53,7 @@ export function useRoomSession(
   const [erro, setErro] = useState<{ texto: string; podeTentar: boolean } | null>(null);
   const [perdida, setPerdida] = useState(false);
   const [saindo, setSaindo] = useState(false);
-  const [revanche, setRevanche] = useState<string | null>(null);
+  const [revanche, setRevanche] = useState<"pedida" | "indisponivel" | null>(null);
   const [copia, setCopia] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,8 +81,8 @@ export function useRoomSession(
     let ended = false;
     let seated = false;
     let game: OnlineGame | null = null;
-    const forgetToken = () => {
-      if (codigoRef.current) seatStore.esquecer(codigoRef.current);
+    const forgetToken = (ev: SessaoEvento) => {
+      if (codigoRef.current && shouldForgetToken(ev)) seatStore.esquecer(codigoRef.current);
     };
     const terminal = (texto: string, podeTentar = true) => {
       terminalRef.current = true;
@@ -130,7 +133,7 @@ export function useRoomSession(
           if (seated && m.codigo === "mensagem_invalida") return;
           if (m.codigo === "token_invalido" || m.codigo === "sala_inexistente") {
             // Assento/sala mortos: sem "Tentar de novo" (evita reentrar na própria sala).
-            forgetToken();
+            forgetToken({ t: "erro", codigo: m.codigo });
             terminal(erroMensagem(m.codigo), false);
             return;
           }
@@ -153,9 +156,9 @@ export function useRoomSession(
       onStatus: (s) => {
         try {
           if (ended) return;
+          // "encerrada" NÃO apaga o token: o assento pode seguir vivo na graça do servidor
+          // (ex.: tente_depois ao reconectar) e "Tentar de novo" precisa do reconectar.
           setNet(s);
-          // Fim do cliente depois de sentado: o assento não pode mais ser retomado.
-          if (s === "encerrada" && seated) forgetToken();
         } catch {
           /* ignorado */
         }
@@ -198,7 +201,7 @@ export function useRoomSession(
     terminalRef.current = true;
     setSaindo(true); // evita piscar "A sala foi encerrada" antes de navegar
     c?.close();
-    if (codigoRef.current) seatStore.esquecer(codigoRef.current);
+    if (codigoRef.current && shouldForgetToken({ t: "sair" })) seatStore.esquecer(codigoRef.current);
     router.push("/");
   };
 
@@ -206,10 +209,10 @@ export function useRoomSession(
 
   const pedirRevanche = () => {
     const d = revancheDecision(fase, oponente);
-    if (d === "indisponivel") setRevanche("O adversário não está conectado — revanche indisponível.");
+    if (d === "indisponivel") setRevanche("indisponivel");
     if (d !== "enviar") return;
     clientRef.current?.send({ t: "revanche" });
-    setRevanche("Revanche pedida — aguardando o adversário.");
+    setRevanche("pedida");
   };
 
   const link = sala ? shareLink(window.location.origin, sala.codigo) : "";
@@ -233,7 +236,7 @@ export function useRoomSession(
     erro,
     perdida,
     saindo,
-    revanche,
+    revanche: revancheTexto(revanche, oponente),
     copia,
     oponente,
     link,

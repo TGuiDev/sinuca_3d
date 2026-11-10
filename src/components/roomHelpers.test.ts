@@ -19,6 +19,9 @@ import {
   temOverlay,
   avisoSala,
   createSeatStore,
+  shouldForgetToken,
+  SEM_CONEXAO,
+  revancheTexto,
 } from "./roomHelpers";
 
 describe("cleanNickname", () => {
@@ -323,5 +326,53 @@ describe("createSeatStore", () => {
     expect(m.get("sinuca:token:ABC234")).toBe("tok");
     st.esquecer("ABC234");
     expect(m.has("sinuca:token:ABC234")).toBe(false);
+  });
+});
+
+describe("shouldForgetToken", () => {
+  it("esquece só quando o assento morreu de fato", () => {
+    expect(shouldForgetToken({ t: "erro", codigo: "token_invalido" })).toBe(true);
+    expect(shouldForgetToken({ t: "erro", codigo: "sala_inexistente" })).toBe(true);
+    expect(shouldForgetToken({ t: "sair" })).toBe(true);
+  });
+  it("mantém o token em erros transitórios, encerrada e desconexão", () => {
+    for (const codigo of ["tente_depois", "limite", "origem", "sala_cheia", "mensagem_invalida"] as const) {
+      expect(shouldForgetToken({ t: "erro", codigo })).toBe(false);
+    }
+    expect(shouldForgetToken({ t: "encerrada" })).toBe(false);
+    expect(shouldForgetToken({ t: "desconexao" })).toBe(false);
+  });
+  it("sequência: sentado + tente_depois mantém o token e o retry reconecta", () => {
+    const blocked = () => {
+      throw new Error("SecurityError");
+    };
+    const st = createSeatStore(blocked);
+    st.sentou("ABC234", "tok");
+    for (const ev of [{ t: "erro", codigo: "tente_depois" } as const, { t: "encerrada" } as const]) {
+      if (shouldForgetToken(ev)) st.esquecer("ABC234");
+    }
+    expect(
+      planConnect({
+        param: { kind: "codigo", codigo: "ABC234" },
+        storedToken: st.token("ABC234"),
+        seatedCode: st.jaSentou("ABC234") ? "ABC234" : null,
+        nick: "Ana",
+      }),
+    ).toBe("reconectar");
+  });
+  it("SEM_CONEXAO exportado dos helpers", () => {
+    expect(SEM_CONEXAO).toBe("Não foi possível conectar ao servidor.");
+  });
+});
+
+describe("revancheTexto", () => {
+  it("indisponível some quando o adversário volta a conectar", () => {
+    expect(revancheTexto("indisponivel", { apelido: "B", conectado: false })).toMatch(/revanche indisponível/);
+    expect(revancheTexto("indisponivel", null)).toMatch(/revanche indisponível/);
+    expect(revancheTexto("indisponivel", { apelido: "B", conectado: true })).toBeNull();
+  });
+  it("pedida e nada", () => {
+    expect(revancheTexto("pedida", { apelido: "B", conectado: true })).toBe("Revanche pedida — aguardando o adversário.");
+    expect(revancheTexto(null, null)).toBeNull();
   });
 });
