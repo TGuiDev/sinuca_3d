@@ -5,7 +5,7 @@ import { startServer } from "./index";
 
 const ORIGIN = "http://test.local";
 type Srv = Awaited<ReturnType<typeof startServer>>;
-type Msg = Record<string, any>;
+type Msg = Record<string, unknown>;
 
 class Client {
   msgs: Msg[] = [];
@@ -200,7 +200,7 @@ describe("servidor WebSocket", () => {
     const key = Buffer.from([1, 2, 3, 4]);
     const masked = Buffer.from(payload.map((x, i) => x ^ key[i % 4]));
     const frame = [Buffer.concat([Buffer.from([0x81, 0x80 | payload.length]), key, masked])];
-    const raw = (a.ws as any)._socket as net.Socket;
+    const raw = (a.ws as unknown as { _socket: net.Socket })._socket;
     for (const f of frame) raw.write(f);
     await sleep(300);
     expect(b.msgs.some((m) => m.t === "estado" && m.fase === "fim")).toBe(false);

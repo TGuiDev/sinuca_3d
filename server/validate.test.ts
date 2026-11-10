@@ -19,8 +19,8 @@ describe("parseClientMessage", () => {
     const raw = '{"t":"tacada","angulo":1,"forca":0.5,"extra":1,"__proto__":{"polluted":true}}';
     const r = parseClientMessage(raw);
     expect(Object.keys(r as object)).toEqual(["t", "angulo", "forca"]);
-    expect(({} as any).polluted).toBeUndefined();
-    expect((r as any).polluted).toBeUndefined();
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect((r as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it("rejeita entradas inválidas", () => {

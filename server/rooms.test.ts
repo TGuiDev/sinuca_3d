@@ -1,10 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { ROOM_CODE_RE } from "@/online/protocol";
-import type { ServerMsg } from "@/online/protocol";
 import { RoomManager } from "./rooms";
 import type { Conn } from "./room";
 
-const mk = (): Conn => ({ send: (_m: ServerMsg) => {}, close: () => {} });
+const mk = (): Conn => ({ send: () => {}, close: () => {} });
 
 describe("RoomManager", () => {
   it("gera códigos válidos e únicos", () => {
