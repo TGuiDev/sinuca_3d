@@ -71,17 +71,26 @@ describe("Room", () => {
   });
 
   it("reconexão com conexão antiga aberta: fecha a antiga, obsoleta é ignorada", () => {
-    const { room, a, ja } = full();
+    const { room, a, b, ja, jb } = full();
     const nova = fake();
     expect(room.reconnect("x".repeat(32), nova, 5)).toBeNull();
     expect(room.reconnect(ja.token, nova, 5)).toBe(0);
     expect(a.closed).toBe(1);
     expect(nova.msgs.map((m) => m.t)).toEqual(expect.arrayContaining(["sala", "assentos", "estado", "snapshot"]));
+    const aLen = a.msgs.length;
     room.disconnect(0, a, 6);
     nova.msgs.length = 0;
+    b.msgs.length = 0;
     room.tick(6 + GRACE_MS + 10, 16);
+    expect(estados(b).some((e) => e.vencedor !== null)).toBe(false);
     expect(estados(nova).some((e) => e.vencedor !== null)).toBe(false);
-    expect(room.isDead(6 + GRACE_MS + 10)).toBe(false);
+    // novo broadcast mostra assento 0 ainda conectado e vai só para a nova conexão
+    const b2 = fake();
+    room.reconnect(jb.token, b2, 7);
+    const ass = b2.msgs.filter((m) => m.t === "assentos").at(-1) as Extract<ServerMsg, { t: "assentos" }>;
+    expect(ass.assentos[0]?.conectado).toBe(true);
+    expect(nova.msgs.some((m) => m.t === "assentos")).toBe(true);
+    expect(a.msgs.length).toBe(aLen);
   });
 
   it("W.O. após a carência e cancelamento por reconexão", () => {
@@ -104,14 +113,76 @@ describe("Room", () => {
   });
 
   it("vencedor que desconecta depois do fim não inverte o resultado", () => {
-    const { room, a, b } = full();
+    const { room, a, b, ja } = full();
     room.disconnect(1, b, 0);
     room.tick(60_001, 16);
     const n = a.msgs.length;
     room.disconnect(0, a, 61_000);
     room.tick(200_000, 16);
-    expect(estados(a).at(-1)!.vencedor).toBe(0);
     expect(a.msgs.length).toBe(n);
+    const a2 = fake();
+    expect(room.reconnect(ja.token, a2, 201_000)).toBe(0);
+    expect(estados(a2).at(-1)!.vencedor).toBe(0);
+  });
+
+  it("reconectar após sair devolve null", () => {
+    const { room, ja } = full();
+    const a = fake();
+    room.disconnect(0, a, 0);
+    const g = full();
+    g.room.handle(0, { t: "sair" }, 1);
+    expect(g.room.reconnect(g.ja.token, fake(), 2)).toBeNull();
+    void room; void ja;
+  });
+
+  it("join recusado quando o criador saiu ou sumiu além da carência", () => {
+    const r1 = new Room("ABC234");
+    r1.join("Ana", fake(), 0);
+    r1.handle(0, { t: "sair" }, 1);
+    expect(r1.join("Beto", fake(), 2)).toBeNull();
+
+    const c2 = fake();
+    const r2 = new Room("ABC234");
+    r2.join("Ana", c2, 0);
+    r2.disconnect(0, c2, 0);
+    expect(r2.join("Beto", fake(), 60_001)).toBeNull();
+
+    const c3 = fake();
+    const r3 = new Room("ABC234");
+    r3.join("Ana", c3, 0);
+    r3.disconnect(0, c3, 0);
+    expect(r3.join("Beto", fake(), 1_000)).not.toBeNull();
+  });
+
+  it("conn que lança em send não impede o outro assento", () => {
+    const { room, a, b } = full();
+    a.send = () => {
+      throw new Error("morta");
+    };
+    b.msgs.length = 0;
+    room.handle(0, { t: "tacada", angulo: 0, forca: 0.8 }, 1);
+    expect(estados(b).at(-1)!.fase).toBe("rolando");
+  });
+
+  it("token não-string em reconnect devolve null", () => {
+    const { room } = full();
+    expect(room.reconnect(123 as unknown as string, fake(), 1)).toBeNull();
+    expect(room.reconnect(undefined as unknown as string, fake(), 1)).toBeNull();
+  });
+
+  it("rematch pendente é limpo quando o assento desconecta", () => {
+    const { room, a, b, jb } = full();
+    room.disconnect(1, b, 0);
+    room.tick(60_001, 16); // fim
+    room.handle(1, { t: "revanche" }, 60_002); // sem conn, mas pedido
+    room.disconnect(1, b, 60_003); // conn obsoleta (já null): ignorada
+    const b2 = fake();
+    room.reconnect(jb.token, b2, 60_004);
+    room.handle(1, { t: "revanche" }, 60_005);
+    room.disconnect(1, b2, 60_006);
+    const n = estados(a).length;
+    room.handle(0, { t: "revanche" }, 60_007);
+    expect(estados(a).length).toBe(n);
   });
 
   it("revanche exige os dois e só em fim", () => {

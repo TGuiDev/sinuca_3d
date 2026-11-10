@@ -16,6 +16,14 @@ type Seat = {
   rematch: boolean;
 };
 
+const safeSend = (c: Conn, m: ServerMsg): void => {
+  try {
+    c.send(m);
+  } catch {
+    /* conexão morta: ignorada */
+  }
+};
+
 const safeEqual = (a: string, b: string): boolean => {
   const ba = Buffer.from(a);
   const bb = Buffer.from(b);
@@ -35,6 +43,9 @@ export class Room {
   ) {}
 
   join(nick: string, conn: Conn, now: number): { seat: 0 | 1; token: string } | null {
+    if (this.isDead(now)) return null;
+    const other = this.seats[0] ?? this.seats[1];
+    if (other && (other.left || (other.discAt !== null && now - other.discAt > GRACE_MS))) return null;
     const idx = this.seats[0] === null ? 0 : this.seats[1] === null ? 1 : -1;
     if (idx < 0) return null;
     const seat = idx as 0 | 1;
@@ -52,6 +63,7 @@ export class Room {
   }
 
   reconnect(token: string, conn: Conn, now: number): 0 | 1 | null {
+    if (typeof token !== "string") return null;
     let found: 0 | 1 | null = null;
     for (const i of [0, 1] as const) {
       const s = this.seats[i];
@@ -65,12 +77,18 @@ export class Room {
     s.discAt = null;
     this.touch(now);
     this.lastConnected = now;
-    if (old && old !== conn) old.close();
+    if (old && old !== conn) {
+      try {
+        old.close();
+      } catch {
+        /* conexão já morta */
+      }
+    }
     this.sendSala(found);
     this.broadcast({ t: "assentos", assentos: this.assentos() });
     if (this.match) {
-      conn.send(this.estadoMsg());
-      conn.send({ t: "snapshot", bolas: this.match.snapshot() });
+      safeSend(conn, this.estadoMsg());
+      safeSend(conn, { t: "snapshot", bolas: this.match.snapshot() });
     }
     return found;
   }
@@ -80,6 +98,7 @@ export class Room {
     if (!s || s.conn !== conn) return; // conexão obsoleta
     s.conn = null;
     s.discAt = now;
+    s.rematch = false;
     this.touch(now);
     this.lastConnected = now;
     this.broadcast({ t: "assentos", assentos: this.assentos() });
@@ -128,7 +147,11 @@ export class Room {
         this.lastConnected = now;
         this.broadcast({ t: "assentos", assentos: this.assentos() });
         if (m) this.broadcastState();
-        c?.close();
+        try {
+          c?.close();
+        } catch {
+          /* já fechada */
+        }
         return;
       }
       default:
@@ -181,7 +204,7 @@ export class Room {
 
   private sendSala(seat: 0 | 1): void {
     const s = this.seats[seat]!;
-    s.conn?.send({ t: "sala", codigo: this.code, assentos: this.assentos(), voce: seat, token: s.token });
+    if (s.conn) safeSend(s.conn, { t: "sala", codigo: this.code, assentos: this.assentos(), voce: seat, token: s.token });
   }
 
   private estadoMsg(): ServerMsg {
@@ -195,6 +218,6 @@ export class Room {
   }
 
   private broadcast(msg: ServerMsg): void {
-    for (const s of this.seats) s?.conn?.send(msg);
+    for (const s of this.seats) if (s?.conn) safeSend(s.conn, msg);
   }
 }
