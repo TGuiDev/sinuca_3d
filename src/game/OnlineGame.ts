@@ -1,3 +1,5 @@
+import { isLocked, KEY_STEP, lockPointer, look, pull, unlockPointer } from "./orbitInput";
+import { PITCH_DEFAULT, clampPitch } from "@/render/orbitCam";
 import { easeToward, parseSnapshot, type BallTarget } from "@/online/interp";
 import type { ClientMsg, ServerMsg } from "@/online/protocol";
 import type { Ball, Vec2 } from "@/physics/types";
@@ -24,6 +26,9 @@ export class OnlineGame {
   private power = 0;
   private dragStart: { x: number; y: number } | null = null;
   private view: "top" | "orbit" = "top";
+  private pitch = PITCH_DEFAULT;
+  private pullPx = 0;
+  private lockWanted = false;
   private localCue: Vec2 | null = null;
   private sent = false;
   private holdCue = false;
@@ -76,6 +81,7 @@ export class OnlineGame {
     window.removeEventListener("pointerup", this.onUp);
     window.removeEventListener("pointercancel", this.onCancel);
     window.removeEventListener("keydown", this.onKey);
+    unlockPointer();
     this.scene.dispose();
   }
 
@@ -159,8 +165,18 @@ export class OnlineGame {
 
   private applyView(): void {
     const aiming = this.phase === "aim" || this.phase === "cpu";
-    if (this.view === "orbit" && aiming) this.scene.setView("orbit", this.cuePos(), this.aimAngle);
+    if (this.view === "orbit" && aiming) this.scene.setView("orbit", this.cuePos(), this.aimAngle, this.pitch);
     else this.scene.setView("top");
+    this.syncLock();
+  }
+
+  // Mouse travado só no modo orbital e fora da colocação da branca (que precisa do cursor).
+  private syncLock(): void {
+    const want = this.view === "orbit" && this.phase !== "placing" && this.phase !== "over";
+    if (want === this.lockWanted) return;
+    this.lockWanted = want;
+    if (want) lockPointer(this.container);
+    else unlockPointer();
   }
 
   // ---------- input ----------
@@ -172,20 +188,30 @@ export class OnlineGame {
       return;
     }
     if (this.phase !== "aim") return;
+    if (this.view === "orbit") {
+      if (this.dragStart) {
+        const r = pull(this.pullPx, e.movementY);
+        this.pullPx = r.px;
+        this.power = r.power;
+        this.emit();
+      } else {
+        const l = look({ angle: this.aimAngle, pitch: this.pitch }, e.movementX, e.movementY);
+        this.aimAngle = l.angle;
+        this.pitch = l.pitch;
+        this.applyView();
+      }
+      return;
+    }
     if (this.dragStart) {
       const d = Math.hypot(e.clientX - this.dragStart.x, e.clientY - this.dragStart.y);
       this.power = Math.min(1, d / DRAG_PX_FOR_FULL_POWER);
       this.emit();
       return;
     }
-    if (this.view === "orbit") {
-      this.aimAngle += e.movementX * 0.004;
-    } else {
-      const p = this.scene.pick(e.clientX, e.clientY);
-      if (!p) return;
-      const c = this.cuePos();
-      this.aimAngle = Math.atan2(p.y - c.y, p.x - c.x);
-    }
+    const p = this.scene.pick(e.clientX, e.clientY);
+    if (!p) return;
+    const c = this.cuePos();
+    this.aimAngle = Math.atan2(p.y - c.y, p.x - c.x);
     this.applyView();
   };
 
@@ -202,12 +228,17 @@ export class OnlineGame {
       this.armTimeout("placing");
       return;
     }
-    if (this.phase === "aim" && !this.sent) this.dragStart = { x: e.clientX, y: e.clientY };
+    if (this.view === "orbit" && this.lockWanted && !isLocked(this.container)) lockPointer(this.container);
+    if (this.phase === "aim" && !this.sent) {
+      this.dragStart = { x: e.clientX, y: e.clientY };
+      this.pullPx = 0;
+    }
   };
 
   private onUp = (): void => {
     if (this.phase !== "aim" || !this.dragStart) return;
     this.dragStart = null;
+    this.pullPx = 0;
     const forca = Math.min(1, Math.max(0, this.power));
     if (forca > 0.03) {
       this.sent = true;
@@ -223,12 +254,23 @@ export class OnlineGame {
   private onCancel = (): void => {
     if (!this.dragStart) return;
     this.dragStart = null;
+    this.pullPx = 0;
     this.power = 0;
     this.emit();
   };
 
   private onKey = (e: KeyboardEvent): void => {
     if (e.key === "v" || e.key === "V") this.setView(this.view === "top" ? "orbit" : "top");
+    else if (this.phase === "aim" && !this.dragStart) {
+      const k = e.shiftKey ? KEY_STEP / 4 : KEY_STEP;
+      if (e.key === "ArrowLeft") this.aimAngle -= k;
+      else if (e.key === "ArrowRight") this.aimAngle += k;
+      else if (this.view === "orbit" && e.key === "ArrowUp") this.pitch = clampPitch(this.pitch - k * 3);
+      else if (this.view === "orbit" && e.key === "ArrowDown") this.pitch = clampPitch(this.pitch + k * 3);
+      else return;
+      e.preventDefault();
+      this.applyView();
+    }
   };
 
   // ---------- loop ----------

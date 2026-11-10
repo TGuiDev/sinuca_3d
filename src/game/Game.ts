@@ -1,3 +1,5 @@
+import { isLocked, KEY_STEP, lockPointer, look, pull, unlockPointer } from "./orbitInput";
+import { PITCH_DEFAULT, clampPitch } from "@/render/orbitCam";
 import { chooseShot, type Shot } from "@/ai/cpu";
 import { createWorld, isMoving, step, strike } from "@/physics/engine";
 import { rackBalls, TABLE_H, TABLE_W } from "@/physics/table";
@@ -35,6 +37,9 @@ export class Game {
   private power = 0;
   private dragStart: { x: number; y: number } | null = null;
   private view: "top" | "orbit" = "top";
+  private pitch = PITCH_DEFAULT;
+  private pullPx = 0;
+  private lockWanted = false;
   private cpuAt = 0;
   private cpuPlan: (Shot & { at: number }) | null = null;
   private raf = 0;
@@ -72,6 +77,7 @@ export class Game {
     this.container.removeEventListener("pointerdown", this.onDown);
     window.removeEventListener("pointerup", this.onUp);
     window.removeEventListener("keydown", this.onKey);
+    unlockPointer();
     this.scene.dispose();
   }
 
@@ -109,8 +115,18 @@ export class Game {
 
   private applyView(): void {
     const aiming = this.phase === "aim" || this.phase === "cpu";
-    if (this.view === "orbit" && aiming) this.scene.setView("orbit", this.cue.pos, this.aimAngle);
+    if (this.view === "orbit" && aiming) this.scene.setView("orbit", this.cue.pos, this.aimAngle, this.pitch);
     else this.scene.setView("top");
+    this.syncLock();
+  }
+
+  // Mouse travado só no modo orbital e fora da colocação da branca (que precisa do cursor).
+  private syncLock(): void {
+    const want = this.view === "orbit" && this.phase !== "placing" && this.phase !== "over";
+    if (want === this.lockWanted) return;
+    this.lockWanted = want;
+    if (want) lockPointer(this.container);
+    else unlockPointer();
   }
 
   private setPhase(phase: Phase): void {
@@ -176,6 +192,20 @@ export class Game {
       if (p) this.cue.pos = clampCuePlacement(p, this.world.balls);
       return;
     }
+    if (this.view === "orbit" && this.phase === "aim") {
+      if (this.dragStart) {
+        const r = pull(this.pullPx, e.movementY);
+        this.pullPx = r.px;
+        this.power = r.power;
+        this.emit();
+      } else {
+        const l = look({ angle: this.aimAngle, pitch: this.pitch }, e.movementX, e.movementY);
+        this.aimAngle = l.angle;
+        this.pitch = l.pitch;
+        this.applyView();
+      }
+      return;
+    }
     if (this.phase !== "aim" || this.dragStart) {
       if (this.phase === "aim" && this.dragStart) {
         const d = Math.hypot(e.clientX - this.dragStart.x, e.clientY - this.dragStart.y);
@@ -184,13 +214,9 @@ export class Game {
       }
       return;
     }
-    if (this.view === "orbit") {
-      this.aimAngle += e.movementX * 0.004;
-    } else {
-      const p = this.scene.pick(e.clientX, e.clientY);
-      if (!p) return;
-      this.aimAngle = Math.atan2(p.y - this.cue.pos.y, p.x - this.cue.pos.x);
-    }
+    const p = this.scene.pick(e.clientX, e.clientY);
+    if (!p) return;
+    this.aimAngle = Math.atan2(p.y - this.cue.pos.y, p.x - this.cue.pos.x);
     this.applyView();
   };
 
@@ -203,12 +229,17 @@ export class Game {
       this.startTurn(true);
       return;
     }
-    if (this.phase === "aim") this.dragStart = { x: e.clientX, y: e.clientY };
+    if (this.view === "orbit" && this.lockWanted && !isLocked(this.container)) lockPointer(this.container);
+    if (this.phase === "aim") {
+      this.dragStart = { x: e.clientX, y: e.clientY };
+      this.pullPx = 0;
+    }
   };
 
   private onUp = (): void => {
     if (this.phase !== "aim" || !this.dragStart) return;
     this.dragStart = null;
+    this.pullPx = 0;
     if (this.power > 0.03) this.fire(this.aimAngle, this.power);
     else {
       this.power = 0;
@@ -218,6 +249,16 @@ export class Game {
 
   private onKey = (e: KeyboardEvent): void => {
     if (e.key === "v" || e.key === "V") this.setView(this.view === "top" ? "orbit" : "top");
+    else if (this.phase === "aim" && !this.dragStart) {
+      const k = e.shiftKey ? KEY_STEP / 4 : KEY_STEP;
+      if (e.key === "ArrowLeft") this.aimAngle -= k;
+      else if (e.key === "ArrowRight") this.aimAngle += k;
+      else if (this.view === "orbit" && e.key === "ArrowUp") this.pitch = clampPitch(this.pitch - k * 3);
+      else if (this.view === "orbit" && e.key === "ArrowDown") this.pitch = clampPitch(this.pitch + k * 3);
+      else return;
+      e.preventDefault();
+      this.applyView();
+    }
   };
 
   // ---------- loop ----------

@@ -38,7 +38,7 @@ export function Hud({
       ? "Mova o mouse e clique para posicionar a branca."
       : phase === "aim"
         ? view === "orbit"
-          ? "Mova o mouse para girar a mira; clique e arraste para dar a tacada."
+          ? "Mouse gira a mira e inclina a câmera. Segure o botão e puxe o mouse para baixo para dar a tacada. Setas ajustam, Esc solta o mouse."
           : "Aponte com o mouse; clique e arraste para definir a força."
         : phase === "cpu"
           ? opponentHint
@@ -74,7 +74,7 @@ export function Hud({
             onClick={onToggleView}
             className="rounded-lg border border-white/20 bg-black/50 px-3 py-2 text-sm hover:bg-black/70"
           >
-            Câmera: {view === "top" ? "Topo" : "Orbital"} (V)
+            Câmera: {view === "top" ? "Topo" : "1ª pessoa"} (V)
           </button>
           <button
             onClick={onRestart}

@@ -2,14 +2,17 @@ import * as THREE from "three";
 import { BALL_R, POCKETS, POCKET_R, TABLE_H, TABLE_W } from "@/physics/table";
 import type { Ball, Vec2 } from "@/physics/types";
 import { makeBallTexture } from "./ballTexture";
+import { aimGuide } from "./aimGuide";
 import { createCue } from "./cue";
+import { orbitPose, ORBIT_FOV, PITCH_DEFAULT, TOP_FOV } from "./orbitCam";
 
 export type SceneApi = {
   syncBalls(balls: Ball[]): void;
   setCue(visible: boolean, from: Vec2, angle: number, pull: number): void;
-  setView(mode: "top" | "orbit", focus?: Vec2, angle?: number): void;
+  setView(mode: "top" | "orbit", focus?: Vec2, angle?: number, pitch?: number): void;
   pick(clientX: number, clientY: number): Vec2 | null;
   render(): void;
+  snapCamera(): void;
   dispose(): void;
 };
 
@@ -24,7 +27,7 @@ export function createScene(container: HTMLElement): SceneApi {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color("#10151c");
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.05, 20);
+  const camera = new THREE.PerspectiveCamera(TOP_FOV, 1, 0.03, 40);
 
   const disposables: { dispose(): void }[] = [];
   const track = <T extends { dispose(): void }>(d: T): T => {
@@ -63,6 +66,21 @@ export function createScene(container: HTMLElement): SceneApi {
     scene.add(m);
   }
 
+  // Piso e pernas: dão referência de chão quando a câmera está baixa.
+  const floorMat = track(new THREE.MeshStandardMaterial({ color: "#1d1712", roughness: 1 }));
+  const floor = new THREE.Mesh(track(new THREE.PlaneGeometry(30, 30)), floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -0.78;
+  floor.receiveShadow = true;
+  scene.add(floor);
+  const legGeo = track(new THREE.BoxGeometry(0.14, 0.75, 0.14));
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) {
+      const leg = new THREE.Mesh(legGeo, woodMat);
+      leg.position.set(sx * (TABLE_W / 2 - 0.05), -0.405, sz * (TABLE_H / 2 - 0.02));
+      scene.add(leg);
+    }
+
   const holeMat = track(new THREE.MeshBasicMaterial({ color: "#050505" }));
   const holeGeo = track(new THREE.CircleGeometry(POCKET_R, 32));
   for (const p of POCKETS) {
@@ -88,27 +106,57 @@ export function createScene(container: HTMLElement): SceneApi {
   }
 
   const cue = createCue();
-  scene.add(cue.group, cue.aim);
+  scene.add(cue.group);
 
-  // Câmera
+  // Guia de mira: faixa sobre o pano até a primeira bola/tabela e anel da branca fantasma.
+  const guideGeo = track(new THREE.PlaneGeometry(1, 0.006));
+  guideGeo.rotateX(-Math.PI / 2);
+  guideGeo.translate(0.5, 0, 0);
+  const guideMat = track(new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.55 }));
+  const guide = new THREE.Mesh(guideGeo, guideMat);
+  guide.visible = false;
+  scene.add(guide);
+  const ringGeo = track(new THREE.RingGeometry(BALL_R * 0.85, BALL_R, 32));
+  ringGeo.rotateX(-Math.PI / 2);
+  const ring = new THREE.Mesh(ringGeo, guideMat);
+  ring.visible = false;
+  scene.add(ring);
+
+  // Câmera: calcula a pose-alvo e a render() aproxima a câmera dela (amortecimento).
   let mode: "top" | "orbit" = "top";
   let focus: Vec2 = { x: TABLE_W / 2, y: TABLE_H / 2 };
   let aimAngle = 0;
+  let pitch = PITCH_DEFAULT;
+  let snap = true;
+  let lastRender = 0;
+  const target = new THREE.PerspectiveCamera(); // câmera: lookAt aponta -Z como a câmera real
+  let targetFov = TOP_FOV;
 
   function placeCamera() {
     if (mode === "top") {
-      const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+      const t = Math.tan(THREE.MathUtils.degToRad(TOP_FOV / 2));
       const d = Math.max((TABLE_W / 2 + 0.2) / (t * camera.aspect), (TABLE_H / 2 + 0.2) / t);
-      camera.up.set(0, 0, -1);
-      camera.position.set(0, d, 0.0001);
-      camera.lookAt(0, 0, 0);
+      target.up.set(0, 0, -1);
+      target.position.set(0, d, 0.0001);
+      target.lookAt(0, 0, 0);
+      targetFov = TOP_FOV;
     } else {
       const f = toScene(focus);
-      const dx = Math.cos(aimAngle);
-      const dz = Math.sin(aimAngle);
-      camera.up.set(0, 1, 0);
-      camera.position.set(f.x - dx * 0.95, 0.5, f.z - dz * 0.95);
-      camera.lookAt(f.x + dx * 0.5, 0, f.z + dz * 0.5);
+      const { pos, look } = orbitPose(f.x, f.z, aimAngle, pitch);
+      target.up.set(0, 1, 0);
+      target.position.set(pos.x, pos.y, pos.z);
+      target.lookAt(look.x, look.y, look.z);
+      targetFov = ORBIT_FOV;
+    }
+    if (snap) applyCamera(1);
+  }
+
+  function applyCamera(k: number) {
+    camera.position.lerp(target.position, k);
+    camera.quaternion.slerp(target.quaternion, k);
+    if (Math.abs(camera.fov - targetFov) > 0.01 || k >= 1) {
+      camera.fov += (targetFov - camera.fov) * k;
+      camera.updateProjectionMatrix();
     }
   }
 
@@ -118,6 +166,7 @@ export function createScene(container: HTMLElement): SceneApi {
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
+    snap = true;
     placeCamera();
   }
   const ro = new ResizeObserver(resize);
@@ -156,12 +205,35 @@ export function createScene(container: HTMLElement): SceneApi {
     setCue(visible, from, angle, pull) {
       const s = toScene(from);
       cue.set(visible, s.x, s.z, angle, pull);
+      guide.visible = visible;
+      if (!visible) {
+        ring.visible = false;
+        return;
+      }
+      const others: Vec2[] = [];
+      for (const [id, p] of last) if (id !== 0) others.push(p);
+      const g = aimGuide(from, angle, others);
+      guide.position.set(s.x, 0.003, s.z);
+      guide.rotation.y = -angle;
+      guide.scale.set(g.length, 1, 1);
+      ring.visible = g.ghost !== null;
+      if (g.ghost) {
+        const gs = toScene(g.ghost);
+        ring.position.set(gs.x, 0.003, gs.z);
+      }
     },
-    setView(m, f, a) {
+    setView(m, f, a, p) {
+      if (m !== mode) snap = false;
       mode = m;
       if (f) focus = f;
       if (a !== undefined) aimAngle = a;
+      if (p !== undefined) pitch = p;
       placeCamera();
+    },
+    snapCamera() {
+      snap = true;
+      placeCamera();
+      snap = false;
     },
     pick(clientX, clientY) {
       const r = renderer.domElement.getBoundingClientRect();
@@ -175,6 +247,13 @@ export function createScene(container: HTMLElement): SceneApi {
       return { x: hit.x + TABLE_W / 2, y: hit.z + TABLE_H / 2 };
     },
     render() {
+      const now = performance.now();
+      const dt = lastRender ? Math.min((now - lastRender) / 1000, 0.1) : 0.016;
+      lastRender = now;
+      if (snap) {
+        applyCamera(1);
+        snap = false;
+      } else applyCamera(1 - Math.exp(-dt * (mode === "orbit" ? 16 : 7)));
       renderer.render(scene, camera);
     },
     dispose() {
