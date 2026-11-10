@@ -90,6 +90,7 @@ export class Match {
   }
 
   forfeit(loser: 0 | 1, mensagem: string): void {
+    if (this.fase === "fim") return;
     this.rules = { ...this.rules, winner: loser === 0 ? 1 : 0, message: mensagem };
     this.fase = "fim";
   }

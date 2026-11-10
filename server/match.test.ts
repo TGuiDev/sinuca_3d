@@ -102,18 +102,42 @@ describe("Match", () => {
     expect(e.fase).toBe("fim");
   });
 
-  it("maxShotSeconds encerra a tacada à força", () => {
-    const m = new Match({ maxShotSeconds: 0.05 });
-    m.shoot(0, 0, 1);
-    let r = m.advance(33);
-    r = m.advance(33);
+  it("maxShotSeconds encerra a tacada à força com velocidades zeradas", () => {
+    const rack = [ball(0, 0.5, 0.6), ball(1, 2, 0.3)];
+    const m = new Match({ rack, maxShotSeconds: 0.2 });
+    expect(m.shoot(0, 0, 1)).toBe(true);
+    expect(m.advance(8)).toBe("moving");
+    expect(rack.some((b) => b.vel.x !== 0 || b.vel.y !== 0)).toBe(true);
+    let r = "moving";
+    for (let i = 0; i < 20 && r !== "settled"; i++) r = m.advance(33);
     expect(r).toBe("settled");
-    expect(m.snapshot().length).toBe(16);
-    const m2 = new Match({ maxShotSeconds: 0.05 });
-    m2.shoot(0, 0, 1);
-    m2.advance(33);
-    m2.advance(33);
-    expect(m2.advance(33)).toBe("idle");
+    for (const b of rack) expect(b.vel).toEqual({ x: 0, y: 0 });
+    expect(m.estado().fase).not.toBe("rolando");
+    const s1 = m.snapshot();
+    m.advance(100);
+    expect(m.snapshot()).toEqual(s1);
+  });
+
+  it("forfeit após fim não altera o resultado", () => {
+    const m = new Match({ rack: [ball(0, 0.6, 0.6), ball(8, 0.3, 0.3)] });
+    m.shoot(0, Math.atan2(-1, -1), 1);
+    run(m);
+    const e = m.estado();
+    expect(e.fase).toBe("fim");
+    m.forfeit(e.vencedor as 0 | 1, "W.O.");
+    m.forfeit(e.vencedor === 0 ? 1 : 0, "W.O.");
+    expect(m.estado().vencedor).toBe(e.vencedor);
+    expect(m.estado().mensagem).toBe(e.mensagem);
+  });
+
+  it("branca respawnada sobre outra bola é afastada ao entrar em posicionando", () => {
+    const rack = [ball(0, 0.5, 0.5), ball(1, 0.635, 0.635)];
+    const m = new Match({ rack });
+    m.shoot(0, Math.atan2(-0.5, -0.5), 1);
+    run(m);
+    expect(m.estado().fase).toBe("posicionando");
+    const [, x, y] = cueOf(m);
+    expect(Math.hypot(x - 0.635, y - 0.635)).toBeGreaterThanOrEqual(2 * BALL_R - 1e-3);
   });
 
   it("forfeit define vencedor e fim", () => {
