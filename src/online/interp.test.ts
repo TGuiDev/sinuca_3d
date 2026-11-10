@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { easeToward, parseSnapshot } from "./interp";
+import { easeAngle, easeToward, parseSnapshot } from "./interp";
 
 describe("parseSnapshot", () => {
   it("mapeia bolas e flag de encaçapada", () => {
@@ -57,5 +57,15 @@ describe("easeToward", () => {
       expect(d).toBeLessThan(prev);
       prev = d;
     }
+  });
+});
+
+describe("easeAngle", () => {
+  it("vai pelo caminho mais curto através de ±π", () => {
+    const a = easeAngle(Math.PI - 0.1, -Math.PI + 0.1, 0.1);
+    expect(a).toBeGreaterThan(Math.PI - 0.1);
+  });
+  it("converge", () => {
+    expect(easeAngle(0, 1, 10)).toBeCloseTo(1, 3);
   });
 });

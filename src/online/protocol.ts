@@ -9,6 +9,8 @@ export type ClientMsg =
   | { t: "reconectar"; codigo: string; token: string }
   | { t: "tacada"; angulo: number; forca: number }
   | { t: "posicionar_branca"; x: number; y: number }
+  | { t: "mirar"; angulo: number; forca: number }
+  | { t: "mover_branca"; x: number; y: number }
   | { t: "revanche" }
   | { t: "sair" };
 
@@ -38,4 +40,6 @@ export type ServerMsg =
       fase: Fase;
     }
   | { t: "snapshot"; bolas: [number, number, number, 0 | 1][] }
+  | { t: "mira"; angulo: number; forca: number }
+  | { t: "branca"; x: number; y: number }
   | { t: "erro"; codigo: ErroCodigo };

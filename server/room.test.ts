@@ -70,6 +70,30 @@ describe("Room", () => {
     expect(["mira", "posicionando"]).toContain(estados(a).at(-1)!.fase);
   });
 
+  it("mira do jogador da vez é repassada só ao oponente, com valores saneados", () => {
+    const { room, a, b } = full();
+    a.msgs.length = b.msgs.length = 0;
+    room.handle(0, { t: "mirar", angulo: 7, forca: 5 }, 1);
+    expect(a.msgs).toEqual([]);
+    const m = b.msgs[0] as Extract<ServerMsg, { t: "mira" }>;
+    expect(m.t).toBe("mira");
+    expect(m.forca).toBe(1);
+    expect(m.angulo).toBeCloseTo(7 - 2 * Math.PI);
+  });
+
+  it("mira fora de turno, em fase errada ou posição da branca fora de fase é ignorada", () => {
+    const { room, a, b } = full();
+    a.msgs.length = b.msgs.length = 0;
+    room.handle(1, { t: "mirar", angulo: 0, forca: 0.5 }, 1); // não é a vez
+    room.handle(0, { t: "mover_branca", x: 1, y: 1 }, 1); // fase é "mira", não "posicionando"
+    expect(a.msgs).toEqual([]);
+    expect(b.msgs).toEqual([]);
+    room.handle(0, { t: "tacada", angulo: 0, forca: 0.8 }, 1); // agora rolando
+    a.msgs.length = b.msgs.length = 0;
+    room.handle(0, { t: "mirar", angulo: 0, forca: 0.5 }, 2);
+    expect(b.msgs).toEqual([]);
+  });
+
   it("reconexão com conexão antiga aberta: fecha a antiga, obsoleta é ignorada", () => {
     const { room, a, b, ja, jb } = full();
     const nova = fake();

@@ -19,6 +19,13 @@ export function parseSnapshot(bolas: Snapshot): Map<number, BallTarget> {
   return out;
 }
 
+/** Aproxima ângulos (rad) pelo caminho mais curto, independente de framerate. */
+export function easeAngle(current: number, target: number, dtSec: number, rate = 18): number {
+  const k = 1 - Math.exp(-rate * Math.max(0, dtSec));
+  const d = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + d * k;
+}
+
 /** Aproximação exponencial independente de framerate. */
 export function easeToward(current: Vec2, target: Vec2, dtSec: number, rate = 25): Vec2 {
   const k = 1 - Math.exp(-rate * Math.max(0, dtSec));

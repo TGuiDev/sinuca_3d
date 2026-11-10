@@ -126,6 +126,8 @@ export function useRoomSession(
           game?.apply(m);
           return;
         case "snapshot":
+        case "mira":
+        case "branca":
           game?.apply(m);
           return;
         case "erro":

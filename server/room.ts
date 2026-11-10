@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { Assento, ClientMsg, ServerMsg } from "@/online/protocol";
+import { TABLE_H, TABLE_W } from "@/physics/table";
 import { Match } from "./match";
 
 export type Conn = { send(msg: ServerMsg): void; close(): void };
@@ -125,6 +126,26 @@ export class Room {
           this.broadcast({ t: "snapshot", bolas: m.snapshot() });
         }
         return;
+      case "mirar":
+      case "mover_branca": {
+        // Só repassa ao oponente o que o jogador da vez está fazendo; nada é gravado nem muda o jogo.
+        if (!m || m.estado().turno !== seat) return;
+        const peer = this.seats[seat === 0 ? 1 : 0]?.conn;
+        if (!peer) return;
+        if (msg.t === "mirar") {
+          if (fase !== "mira") return;
+          const angulo = Math.atan2(Math.sin(msg.angulo), Math.cos(msg.angulo));
+          safeSend(peer, { t: "mira", angulo, forca: Math.min(1, Math.max(0, msg.forca)) });
+        } else {
+          if (fase !== "posicionando") return;
+          safeSend(peer, {
+            t: "branca",
+            x: Math.min(TABLE_W, Math.max(0, msg.x)),
+            y: Math.min(TABLE_H, Math.max(0, msg.y)),
+          });
+        }
+        return;
+      }
       case "revanche":
         if (!m || fase !== "fim") return;
         s.rematch = true;

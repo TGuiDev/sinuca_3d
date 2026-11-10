@@ -60,6 +60,10 @@ export function parseClientMessage(raw: string): ClientMsg | null {
         : null;
     case "posicionar_branca":
       return finite(m.x) && finite(m.y) ? { t: "posicionar_branca", x: m.x, y: m.y } : null;
+    case "mirar":
+      return finite(m.angulo) && finite(m.forca) ? { t: "mirar", angulo: m.angulo, forca: m.forca } : null;
+    case "mover_branca":
+      return finite(m.x) && finite(m.y) ? { t: "mover_branca", x: m.x, y: m.y } : null;
     case "revanche":
       return { t: "revanche" };
     case "sair":

@@ -1,6 +1,6 @@
 import { isLocked, KEY_STEP, lockPointer, look, pull, unlockPointer } from "./orbitInput";
 import { PITCH_DEFAULT, clampPitch } from "@/render/orbitCam";
-import { easeToward, parseSnapshot, type BallTarget } from "@/online/interp";
+import { easeAngle, easeToward, parseSnapshot, type BallTarget } from "@/online/interp";
 import type { ClientMsg, ServerMsg } from "@/online/protocol";
 import type { Ball, Vec2 } from "@/physics/types";
 import { createScene, type SceneApi } from "@/render/scene";
@@ -11,6 +11,9 @@ import { clampCuePlacement } from "./placement";
 const DRAG_PX_FOR_FULL_POWER = 250;
 const ZERO: Vec2 = { x: 0, y: 0 };
 const SHOT_TIMEOUT_MS = 2000;
+const AIM_SEND_MS = 80; // ≤ ~12 msgs/s (o servidor aceita 20/s)
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 type Estado = Extract<ServerMsg, { t: "estado" }>;
 
@@ -33,6 +36,10 @@ export class OnlineGame {
   private sent = false;
   private holdCue = false;
   private pending: { timer: ReturnType<typeof setTimeout>; prev: Phase } | null = null;
+  // O que o oponente está fazendo na vez dele (mira e branca na mão), suavizado.
+  private oppAim: { angle: number; power: number; shownAngle: number; shownPower: number } | null = null;
+  private oppCue: { target: Vec2; shown: Vec2 } | null = null;
+  private lastAimSent = { at: 0, angle: 0, power: -1, x: -1, y: -1 };
   private raf = 0;
   private lastTime = 0;
   private disposed = false;
@@ -62,6 +69,27 @@ export class OnlineGame {
     if (this.disposed) return;
     if (m.t === "snapshot") this.applySnapshot(m.bolas);
     else if (m.t === "estado") this.applyEstado(m);
+    else if (m.t === "mira") this.applyOppAim(m.angulo, m.forca);
+    else if (m.t === "branca") this.applyOppCue(m.x, m.y);
+  }
+
+  private applyOppAim(angulo: unknown, forca: unknown): void {
+    if (this.phase !== "cpu" || this.estado?.fase !== "mira") return;
+    if (!finite(angulo) || !finite(forca)) return;
+    const power = Math.min(1, Math.max(0, forca));
+    const a = this.oppAim;
+    if (a) {
+      a.angle = angulo;
+      a.power = power;
+    } else this.oppAim = { angle: angulo, power, shownAngle: angulo, shownPower: power };
+  }
+
+  private applyOppCue(x: unknown, y: unknown): void {
+    if (this.phase !== "cpu" || this.estado?.fase !== "posicionando") return;
+    if (!finite(x) || !finite(y)) return;
+    const target = clampCuePlacement({ x, y }, this.others());
+    if (this.oppCue) this.oppCue.target = target;
+    else this.oppCue = { target, shown: target };
   }
 
   setView(view: "top" | "orbit"): void {
@@ -106,6 +134,8 @@ export class OnlineGame {
   private applyEstado(e: Estado): void {
     this.clearPending();
     this.estado = e;
+    this.oppAim = null;
+    this.oppCue = null;
     this.sent = false;
     this.dragStart = null;
     this.power = 0;
@@ -156,7 +186,7 @@ export class OnlineGame {
   }
 
   private cuePos(): Vec2 {
-    return this.localCue ?? this.balls.get(0)?.pos ?? ZERO;
+    return this.localCue ?? this.oppCue?.shown ?? this.balls.get(0)?.pos ?? ZERO;
   }
 
   private others(): Ball[] {
@@ -273,6 +303,35 @@ export class OnlineGame {
     }
   };
 
+  // ---------- oponente ----------
+
+  private updateOpponent(dt: number): void {
+    const a = this.oppAim;
+    if (this.phase === "cpu" && a) {
+      a.shownAngle = easeAngle(a.shownAngle, a.angle, dt);
+      a.shownPower += (a.power - a.shownPower) * (1 - Math.exp(-18 * dt));
+      this.aimAngle = a.shownAngle;
+      if (this.view === "orbit") this.applyView(); // câmera acompanha a mira dele
+    }
+    const c = this.oppCue;
+    if (this.phase === "cpu" && c) c.shown = easeToward(c.shown, c.target, dt, 18);
+  }
+
+  private sendAim(now: number): void {
+    if (this.sent || now - this.lastAimSent.at < AIM_SEND_MS) return;
+    const l = this.lastAimSent;
+    if (this.phase === "aim") {
+      if (Math.abs(this.aimAngle - l.angle) < 0.002 && Math.abs(this.power - l.power) < 0.01) return;
+      this.send({ t: "mirar", angulo: this.aimAngle, forca: this.power });
+      this.lastAimSent = { ...l, at: now, angle: this.aimAngle, power: this.power };
+    } else if (this.phase === "placing" && this.localCue) {
+      const c = this.localCue;
+      if (Math.abs(c.x - l.x) < 0.002 && Math.abs(c.y - l.y) < 0.002) return;
+      this.send({ t: "mover_branca", x: c.x, y: c.y });
+      this.lastAimSent = { ...l, at: now, x: c.x, y: c.y };
+    }
+  }
+
   // ---------- loop ----------
 
   private frame = (now: number): void => {
@@ -287,16 +346,21 @@ export class OnlineGame {
       b.pocketed = t.pocketed;
       b.pos = easeToward(b.pos, t, dt);
     }
+    this.updateOpponent(dt);
+    this.sendAim(now);
     const list = this.others();
-    if (this.localCue && (this.phase === "placing" || this.holdCue)) {
+    const ghost = this.localCue && (this.phase === "placing" || this.holdCue) ? this.localCue : this.oppCue?.shown;
+    if (ghost) {
       const i = list.findIndex((b) => b.id === 0);
-      const cue: Ball = { id: 0, pos: this.localCue, vel: { ...ZERO }, pocketed: false };
+      const cue: Ball = { id: 0, pos: ghost, vel: { ...ZERO }, pocketed: false };
       if (i >= 0) list[i] = cue;
       else list.push(cue);
     }
     this.scene.syncBalls(list);
-    const showCue = this.phase === "aim";
-    this.scene.setCue(showCue, this.cuePos(), this.aimAngle, showCue ? this.power * 0.25 : 0);
+    const oppAiming = this.phase === "cpu" && this.oppAim !== null;
+    const showCue = this.phase === "aim" || oppAiming;
+    const pull = this.phase === "aim" ? this.power : (this.oppAim?.shownPower ?? 0);
+    this.scene.setCue(showCue, this.cuePos(), this.aimAngle, showCue ? pull * 0.25 : 0);
     this.scene.render();
   };
 }

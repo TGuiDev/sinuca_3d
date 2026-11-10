@@ -61,3 +61,12 @@ describe("cleanNickname", () => {
     expect(cleanNickname("Zé🎱")).toBe("Zé🎱");
   });
 });
+
+describe("mensagens de mira", () => {
+  it("aceita mirar e mover_branca e rejeita não finitos", () => {
+    expect(p({ t: "mirar", angulo: 1, forca: 0.5 })).toEqual({ t: "mirar", angulo: 1, forca: 0.5 });
+    expect(p({ t: "mover_branca", x: 1, y: 2 })).toEqual({ t: "mover_branca", x: 1, y: 2 });
+    expect(p({ t: "mirar", angulo: "1", forca: 0 })).toBeNull();
+    expect(p({ t: "mover_branca", x: null, y: 1 })).toBeNull();
+  });
+});
