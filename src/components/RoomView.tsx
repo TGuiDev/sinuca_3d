@@ -3,7 +3,7 @@
 import { type FormEvent, type ReactNode, useState } from "react";
 import { Painel, VoltarMenu, btnPrimary } from "./RoomUi";
 import RoomSession from "./RoomSession";
-import { APELIDO_KEY, cleanNickname, parseRoomParam, safeGet, safeSet, tokenKey } from "./roomHelpers";
+import { APELIDO_KEY, cleanNickname, parseRoomParam, planConnect, safeGet, safeSet, seatStore } from "./roomHelpers";
 
 function Tela({ children }: { children: ReactNode }) {
   return <main className="grid min-h-screen place-items-center bg-[#10151c] p-4">{children}</main>;
@@ -35,10 +35,16 @@ export default function RoomView({ codigo: raw }: { codigo: string }) {
     );
   }
 
+  // `resolvido` = código recebido em "sala" (importa para "nova").
   const codigo = resolvido ?? (param.kind === "codigo" ? param.codigo : null);
-  const temToken = codigo !== null && safeGet(tokenKey(codigo)) !== null;
+  const plano = planConnect({
+    param,
+    storedToken: codigo ? seatStore.token(codigo) : null,
+    seatedCode: codigo && seatStore.jaSentou(codigo) ? codigo : null,
+    nick: apelido,
+  });
 
-  if (!apelido && !temToken) {
+  if (plano === "pedir_apelido") {
     const enviar = (e: FormEvent) => {
       e.preventDefault();
       const n = cleanNickname(draft);
@@ -78,7 +84,7 @@ export default function RoomView({ codigo: raw }: { codigo: string }) {
     <RoomSession
       key={tentativa}
       codigoInicial={codigo}
-      apelido={apelido ?? ""}
+      apelido={apelido}
       onCodigo={setResolvido}
       onTentarDeNovo={() => setTentativa((t) => t + 1)}
     />
