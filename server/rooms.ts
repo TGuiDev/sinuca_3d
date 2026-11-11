@@ -5,10 +5,10 @@ import { WindowCounter } from "./limits";
 import { Room } from "./room";
 import type { Conn } from "./room";
 
-export type Limits = { maxRooms: number; maxRoomsPerIp: number; maxAttemptsPerMin: number };
+export type Limits = { maxRooms: number; maxRoomsPerIp: number; maxAttemptsPerMin: number; maxCreatesPerMin: number; maxReconnectsPerMin: number };
 export type Result = { ok: true; room: Room; seat: 0 | 1; token: string } | { ok: false; erro: ErroCodigo };
 
-const DEFAULTS: Limits = { maxRooms: 200, maxRoomsPerIp: 3, maxAttemptsPerMin: 10 };
+const DEFAULTS: Limits = { maxRooms: 200, maxRoomsPerIp: 3, maxAttemptsPerMin: 10, maxCreatesPerMin: 5, maxReconnectsPerMin: 30 };
 const ATTEMPT_WINDOW_MS = 60_000;
 const fail = (erro: ErroCodigo): Result => ({ ok: false, erro });
 
@@ -16,10 +16,14 @@ export class RoomManager {
   private readonly limits: Limits;
   private readonly rooms = new Map<string, Room>();
   private readonly attempts: WindowCounter;
+  private readonly creates: WindowCounter;
+  private readonly reconnects: WindowCounter;
 
   constructor(limits: Partial<Limits> = {}) {
     this.limits = { ...DEFAULTS, ...limits };
     this.attempts = new WindowCounter(this.limits.maxAttemptsPerMin, ATTEMPT_WINDOW_MS);
+    this.creates = new WindowCounter(this.limits.maxCreatesPerMin, ATTEMPT_WINDOW_MS);
+    this.reconnects = new WindowCounter(this.limits.maxReconnectsPerMin, ATTEMPT_WINDOW_MS);
   }
 
   get size(): number {
@@ -39,6 +43,7 @@ export class RoomManager {
   }
 
   create(ip: string, nick: string, conn: Conn, now: number): Result {
+    if (!this.creates.hit(ip, now)) return fail("tente_depois");
     // salas já mortas (ainda não removidas pelo tick) não consomem cota
     let total = 0;
     let mine = 0;
@@ -66,7 +71,7 @@ export class RoomManager {
   }
 
   reconnect(ip: string, code: string, token: string, conn: Conn, now: number): Result {
-    if (!this.attempts.hit(ip, now)) return fail("tente_depois");
+    if (!this.reconnects.hit(ip, now)) return fail("tente_depois");
     const room = this.get(code);
     if (!room || room.isDead(now)) return fail("sala_inexistente");
     const seat = room.reconnect(token, conn, now);
@@ -76,7 +81,10 @@ export class RoomManager {
   tick(now: number, dtMs: number): void {
     for (const [code, room] of this.rooms) {
       room.tick(now, dtMs);
-      if (room.isDead(now)) this.rooms.delete(code);
+      if (room.isDead(now)) {
+        room.close();
+        this.rooms.delete(code);
+      }
     }
   }
 }

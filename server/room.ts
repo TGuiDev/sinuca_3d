@@ -7,6 +7,7 @@ export type Conn = { send(msg: ServerMsg): void; close(): void };
 
 export const GRACE_MS = 60_000;
 export const IDLE_TTL_MS = 600_000;
+export const TURN_MS = 120_000; // tempo máximo para mirar/posicionar; estourou = W.O.
 
 type Seat = {
   nick: string;
@@ -37,6 +38,10 @@ export class Room {
   private match: Match | null = null;
   private lastActivity: number | null = null;
   private lastConnected: number | null = null;
+  private turnMatch: Match | null = null;
+  private turnTurno: 0 | 1 | null = null;
+  private turnFase: string | null = null;
+  private turnSince = 0;
 
   constructor(
     readonly code: string,
@@ -51,6 +56,8 @@ export class Room {
     if (idx < 0) return null;
     const seat = idx as 0 | 1;
     const token = this.newToken();
+    const taken = this.seats[seat === 0 ? 1 : 0]?.nick;
+    if (taken !== undefined && taken.toLowerCase() === nick.toLowerCase()) nick = `${nick} (2)`;
     this.seats[seat] = { nick, token, conn, discAt: null, left: false, rematch: false };
     this.touch(now);
     this.lastConnected = now;
@@ -148,6 +155,7 @@ export class Room {
       }
       case "revanche":
         if (!m || fase !== "fim") return;
+        if (this.seats[seat === 0 ? 1 : 0]?.left) return;
         s.rematch = true;
         this.touch(now);
         if (this.seats[0]?.rematch && this.seats[1]?.rematch) {
@@ -197,6 +205,18 @@ export class Room {
         return;
       }
     }
+    const est = m.estado();
+    if (this.turnMatch !== m || this.turnTurno !== est.turno || this.turnFase !== est.fase) {
+      this.turnMatch = m;
+      this.turnTurno = est.turno;
+      this.turnFase = est.fase;
+      this.turnSince = now;
+    } else if ((est.fase === "mira" || est.fase === "posicionando") && now - this.turnSince > TURN_MS) {
+      m.forfeit(est.turno, "W.O.: tempo esgotado");
+      this.touch(now);
+      this.broadcastState();
+      return;
+    }
     const r = m.advance(dtMs);
     if (r === "moving") {
       this.broadcast({ t: "snapshot", bolas: m.snapshot() });
@@ -212,6 +232,20 @@ export class Room {
     const anyConnected = this.seats.some((s) => s?.conn);
     if (!anyConnected && now - this.lastConnected > GRACE_MS) return true;
     return now - this.lastActivity > IDLE_TTL_MS;
+  }
+
+  /** Encerra a sala: avisa quem ainda está conectado e fecha as conexões. */
+  close(): void {
+    for (const s of this.seats) {
+      if (!s?.conn) continue;
+      safeSend(s.conn, { t: "erro", codigo: "sala_inexistente" });
+      try {
+        s.conn.close();
+      } catch {
+        /* conexão já morta */
+      }
+      s.conn = null;
+    }
   }
 
   private touch(now: number): void {

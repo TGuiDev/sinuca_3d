@@ -14,6 +14,7 @@ import { parseClientMessage } from "./validate";
 
 const MAX_CONN_PER_IP = 10;
 const MAX_INVALID = 5;
+const HANDSHAKE_MS = 30_000; // sem entrar/criar sala nesse prazo, a conexão é derrubada
 const HEARTBEAT_MS = 15_000;
 
 /** Relógio monotônico em ms inteiros (limitadores e podas assumem tempo não decrescente). */
@@ -143,6 +144,9 @@ export async function startServer(opts: {
 
     let binding: { room: Room; seat: 0 | 1 } | null = null;
     let invalid = 0;
+    const handshake = setTimeout(() => {
+      if (!binding) kill(1008);
+    }, HANDSHAKE_MS);
 
     const bad = (): void => {
       sendErro("mensagem_invalida");
@@ -158,7 +162,7 @@ export async function startServer(opts: {
         const msg = parseClientMessage(data.toString());
         if (!msg) return bad();
         if (msg.t === "criar_sala" || msg.t === "entrar_sala" || msg.t === "reconectar") {
-          if (binding) return sendErro("mensagem_invalida"); // já tem assento
+          if (binding) return bad(); // já tem assento
           const r =
             msg.t === "criar_sala"
               ? manager.create(ip, msg.apelido, conn, now)
@@ -169,7 +173,7 @@ export async function startServer(opts: {
           else sendErro(r.erro);
           return;
         }
-        if (!binding) return sendErro("mensagem_invalida"); // ainda sem assento
+        if (!binding) return bad(); // ainda sem assento
         binding.room.handle(binding.seat, msg, now);
       } catch {
         kill(1011); // sem detalhes, nada enviado ao cliente
@@ -181,6 +185,7 @@ export async function startServer(opts: {
     });
 
     ws.on("close", () => {
+      clearTimeout(handshake);
       live.delete(ws);
       conn.alive = false;
       try {

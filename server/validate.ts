@@ -9,11 +9,12 @@ export function cleanNickname(input: unknown): string | null {
   if (typeof input !== "string") return null;
   const s = input
     .replace(/\s+/g, " ")
-    .replace(/\p{C}/gu, "")
+    .replace(/[\p{C}\p{Zl}\p{Zp}\u115F\u1160\u17B4\u17B5\u2800\u3164\uFFA0]/gu, "")
     .replace(/\s+/g, " ")
     .trim();
   const len = Array.from(s).length;
   if (len < 2 || len > 16) return null;
+  if (!/[\p{L}\p{N}\p{Extended_Pictographic}]/u.test(s)) return null;
   return s;
 }
 
