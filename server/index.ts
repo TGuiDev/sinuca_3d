@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
@@ -27,7 +28,8 @@ function clientIp(req: IncomingMessage): string {
   const h = req.headers["cf-connecting-ip"];
   const raw = Array.isArray(h) ? h[0] : h;
   const first = raw?.split(",")[0]?.trim();
-  return first || req.socket.remoteAddress || "unknown";
+  if (first && isIP(first) !== 0) return first;
+  return req.socket.remoteAddress || "unknown";
 }
 
 function reject(socket: Duplex, status: 403 | 404 | 429, reason: string): void {
