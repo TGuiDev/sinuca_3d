@@ -7,7 +7,7 @@ const mk = (): Conn => ({ send: () => {}, close: () => {} });
 
 describe("RoomManager", () => {
   it("gera códigos válidos e únicos", () => {
-    const m = new RoomManager({ maxRooms: 1000, maxRoomsPerIp: 1000 });
+    const m = new RoomManager({ maxRooms: 1000, maxRoomsPerIp: 1000, maxCreatesPerMin: 1000 });
     const codes = new Set<string>();
     for (let i = 0; i < 200; i++) {
       const r = m.create("1.1.1.1", "a", mk(), 0);
@@ -41,12 +41,32 @@ describe("RoomManager", () => {
     expect(m.join("x", "ABCDEF", "n", mk(), 61_001)).toEqual({ ok: false, erro: "sala_inexistente" });
   });
 
-  it("reconnect também conta na janela", () => {
-    const m = new RoomManager({ maxAttemptsPerMin: 2 });
+  it("reconnect tem janela própria, sem gastar a cota de join", () => {
+    const m = new RoomManager({ maxReconnectsPerMin: 2, maxAttemptsPerMin: 2 });
     const tok = "0".repeat(32);
     expect(m.reconnect("x", "ABCDEF", tok, mk(), 0)).toEqual({ ok: false, erro: "sala_inexistente" });
-    expect(m.join("x", "ABCDEF", "n", mk(), 0)).toEqual({ ok: false, erro: "sala_inexistente" });
+    expect(m.reconnect("x", "ABCDEF", tok, mk(), 0)).toEqual({ ok: false, erro: "sala_inexistente" });
     expect(m.reconnect("x", "ABCDEF", tok, mk(), 0)).toEqual({ ok: false, erro: "tente_depois" });
+    expect(m.join("x", "ABCDEF", "n", mk(), 0)).toEqual({ ok: false, erro: "sala_inexistente" });
+  });
+
+  it("criar sala tem limite por minuto por IP", () => {
+    const m = new RoomManager({ maxCreatesPerMin: 2, maxRoomsPerIp: 10 });
+    expect(m.create("a", "nn", mk(), 0).ok).toBe(true);
+    expect(m.create("a", "nn", mk(), 0).ok).toBe(true);
+    expect(m.create("a", "nn", mk(), 0)).toEqual({ ok: false, erro: "tente_depois" });
+    expect(m.create("b", "nn", mk(), 0).ok).toBe(true);
+  });
+
+  it("sala morta é fechada com aviso ao ser removida", () => {
+    const m = new RoomManager();
+    const sent: unknown[] = [];
+    let closed = false;
+    m.create("a", "nn", { send: (x) => sent.push(x), close: () => (closed = true) }, 0);
+    m.tick(700_000, 33);
+    expect(closed).toBe(true);
+    expect(sent).toContainEqual({ t: "erro", codigo: "sala_inexistente" });
+    expect(m.size).toBe(0);
   });
 
   it("código malformado é sala_inexistente", () => {

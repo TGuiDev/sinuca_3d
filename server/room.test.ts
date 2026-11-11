@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRACE_MS, IDLE_TTL_MS, Room, type Conn } from "./room";
+import { GRACE_MS, IDLE_TTL_MS, TURN_MS, Room, type Conn } from "./room";
 import type { ServerMsg } from "@/online/protocol";
 
 type Fake = Conn & { msgs: ServerMsg[]; closed: number };
@@ -250,5 +250,25 @@ describe("Room", () => {
     const r = full();
     expect(r.room.isDead(IDLE_TTL_MS)).toBe(false);
     expect(r.room.isDead(IDLE_TTL_MS + 1)).toBe(true);
+  });
+});
+
+describe("tempo de turno e apelidos", () => {
+  it("estourar o tempo do turno dá W.O. ao jogador da vez", () => {
+    const { room, a } = full();
+    room.tick(1000, 33); // registra o início do turno
+    room.tick(1000 + TURN_MS + 1, 33);
+    const ult = estados(a).at(-1)!;
+    expect(ult.fase).toBe("fim");
+  });
+
+  it("apelido igual ao do adversário ganha sufixo", () => {
+    const room = new Room("ABC234");
+    const a = fake();
+    const b = fake();
+    room.join("Ana", a, 0);
+    room.join("ana", b, 0);
+    const sala = b.msgs.find((m) => m.t === "sala") as Extract<ServerMsg, { t: "sala" }>;
+    expect(sala.assentos[1]?.apelido).toBe("ana (2)");
   });
 });

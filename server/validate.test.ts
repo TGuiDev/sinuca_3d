@@ -70,3 +70,12 @@ describe("mensagens de mira", () => {
     expect(p({ t: "mover_branca", x: null, y: 1 })).toBeNull();
   });
 });
+
+
+describe("apelidos invisíveis", () => {
+  it("rejeita apelidos feitos só de caracteres invisíveis", () => {
+    expect(cleanNickname("ㅤㅤㅤ")).toBeNull();
+    expect(cleanNickname("⠀⠀")).toBeNull();
+    expect(cleanNickname("aㅤb")).toBe("ab");
+  });
+});
